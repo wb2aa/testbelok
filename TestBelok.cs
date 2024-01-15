@@ -1,7 +1,10 @@
 using Belok.Common.Geometry;
+using Belok.Common.PDB;
+using Belok.Common.Quaternion;
 using Belok.Common.Visualization.BaseGraphics;
 using System.Diagnostics.Metrics;
 using System.Drawing;
+using System.Reflection;
 
 namespace TestBelok
 {
@@ -21,7 +24,7 @@ namespace TestBelok
             string[] lines = File.ReadAllLines(pdbPath);
             Dictionary<int, Point_3> points = ExtractHetatmPoints(lines);
             Dictionary<int, List<int>> connections = ExtractConnections(lines);
-            WriteFrame(x3dPath, points, connections);
+            WriteFrame(x3dPath, points, connections, false);
             Assert.Pass();
         }
         [Test]
@@ -31,7 +34,26 @@ namespace TestBelok
             string x3dPath = Path.Combine(TestDataPath, "dodecahedron.html");
             Dictionary<int, Point_3> points = Dodecahedron.GetPoints();
             Dictionary<int, List<int>> connections = Dodecahedron.GetLines();
-            WriteFrame(x3dPath, points, connections);
+            WriteFrame(x3dPath, points, connections, true);
+            Assert.Pass();
+        }
+        [Test]
+        public void Alignment()
+        {
+            string TestDataPath = "../../../TestData";
+            string x3dPath = Path.Combine(TestDataPath, "alignment.html");
+            Dictionary<int, Point_3> D1points = Dodecahedron.GetPoints();
+            Dictionary<int, List<int>> D1connections = Dodecahedron.GetLines();
+            Dictionary<int, Point_3> D2points = Dodecahedron.GetPoints();
+            Dictionary<int, List<int>> D2connections = Dodecahedron.GetLines();
+            const int size = 3;
+            int[] points1 = new int[size] { 1, 9, 10};
+            double[,] x1 = PointsToDouble(D1points, points1);
+            int[] points2 = new int[size] { 10, 9, 1 };
+            double[,] x2 = PointsToDouble(D2points, points2);
+            Quaternion quaternion = new Quaternion();
+            Transform4x4 transform4x4 = quaternion.Execute_res_list(x1, x2, size);
+            Write2Frames(x3dPath, D1points, D1connections, D2points, D2connections, transform4x4);
             Assert.Pass();
         }
         //HETATM  449  C1  60C B 101      -0.317 -11.262  -3.737  1.00 28.18           C  
@@ -77,14 +99,14 @@ namespace TestBelok
             }
             return connections;
         }
-        private void WriteFrame(string path, Dictionary<int, Point_3> pointspoints, Dictionary<int, List<int>> connections)
+        private void WriteFrame(string path, Dictionary<int, Point_3> points, Dictionary<int, List<int>> connections, bool label)
         {
             double rCylinder = 0.1;
             double viewportZ = 15.0;
             X3D_Html_graphics x3d = new X3D_Html_graphics();
             x3d.open(path);
             x3d.SetColor(Color.Violet);
-            Point_3 center = GetCenter(pointspoints);
+            Point_3 center = GetCenter(points);
             x3d.SetCenter(center);
             x3d.WriteHeader();
             double[] c = new double[3];
@@ -94,11 +116,62 @@ namespace TestBelok
             x3d.Viewpoint(c, viewportZ);
             foreach (KeyValuePair<int, List<int>> connection in connections)
             {
-                Point_3 point1 = pointspoints[connection.Key];
+                Point_3 point1 = points[connection.Key];
                 foreach(int p2 in connection.Value)
                 {
-                    Point_3 point2 = pointspoints[p2];
+                    Point_3 point2 = points[p2];
                     x3d.VRML_cylinder(rCylinder, point1, point2);
+                }
+            }
+            if(label)
+            {
+                foreach (KeyValuePair<int, Point_3> kvp in points)
+                {
+                    double[] x = new double[3];
+                    kvp.Value.CopyTo(x);
+                    string text = kvp.Key.ToString();
+                    x3d.VRML_text(text, x);
+                }
+            }
+            x3d.close();
+        }
+        public void Write2Frames(string path, Dictionary<int, Point_3> points1, Dictionary<int, List<int>> connections1,
+                                               Dictionary<int, Point_3> points2, Dictionary<int, List<int>> connections2,
+                                               Transform4x4 transform4x4)
+        {
+            double rCylinder = 0.1;
+            double viewportZ = 15.0;
+            X3D_Html_graphics x3d = new X3D_Html_graphics();
+            x3d.open(path);
+            x3d.SetColor(Color.Violet);
+            Point_3 center = GetCenter(points1);
+            x3d.SetCenter(center);
+            x3d.WriteHeader();
+            double[] c = new double[3];
+            c[0] = center.x;
+            c[1] = center.y;
+            c[2] = center.z;
+            x3d.Viewpoint(c, viewportZ);
+            foreach (KeyValuePair<int, List<int>> connection in connections1)
+            {
+                Point_3 point1 = points1[connection.Key];
+                foreach (int p2 in connection.Value)
+                {
+                    Point_3 point2 = points1[p2];
+                    x3d.VRML_cylinder(rCylinder, point1, point2);
+                }
+            }
+            x3d.SetColor(Color.Yellow);
+            Rotate rot = new Rotate();
+            foreach (KeyValuePair<int, List<int>> connection in connections2)
+            {
+                Point_3 point1 = points2[connection.Key];
+                Point_3 point1new = rot.TransformPTP(point1, transform4x4);
+                foreach (int p2 in connection.Value)
+                {
+                    Point_3 point2 = points2[p2];
+                    Point_3 point2new = rot.TransformPTP(point2, transform4x4);
+                    x3d.VRML_cylinder(rCylinder, point1new, point2new);
                 }
             }
             x3d.close();
@@ -130,7 +203,19 @@ namespace TestBelok
             }
             return center;
         }
-
+        private double[,] PointsToDouble(Dictionary<int, Point_3> dpoints, int[] points)
+        {
+            int size = points.Length;
+            double[,] x = new double[3, size];
+            for(int i = 0; i < size; i++)
+            {
+                Point_3 point = dpoints[points[i]];
+                x[0,i]= point.x;
+                x[1,i]= point.y;
+                x[2,i]= point.z;
+            }
+            return x;
+        }
         public static class Dodecahedron
         {
             public static Dictionary<int, Point_3> GetPoints()
